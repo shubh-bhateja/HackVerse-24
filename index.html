@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ship Route Optimizer</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <style>
+        body {
+            font-family: "Arial", sans-serif;
+            background: linear-gradient(to right, #4e54c8, #8f94fb);
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+        }
+        h2 {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        form {
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: none;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            transition: 0.3s;
+        }
+        input:focus {
+            outline: none;
+            box-shadow: 0 0 5px #4e54c8;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1.1em;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+            transform: scale(1.05);
+        }
+        #map {
+            height: 500px;
+            border: 3px solid #fff;
+            border-radius: 10px;
+            margin-top: 20px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+        #weather-info {
+            margin-top: 20px;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            color: #333; /* Dark text color for better readability */
+        }
+        @media (max-width: 600px) {
+            form {
+                width: 90%;
+            }
+            h2 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h2>Ship Route Optimizer</h2>
+    <form id="route-form">
+        <label for="departure">Departure City: </label>
+        <input type="text" id="departure" placeholder="Enter departure city" required />
+        <label for="arrival">Arrival City: </label>
+        <input type="text" id="arrival" placeholder="Enter arrival city" required />
+        <button type="button" onclick="getWeatherForRoute()">Get Weather and Map</button>
+    </form>
+    <div id="map"></div>
+    <div id="weather-info"></div>
+
+    <script>
+        // Initialize the map
+        var map = L.map("map").setView([20.5937, 78.9629], 5); // Centered on India
+
+        // Add OpenStreetMap tiles
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        }).addTo(map);
+
+        // Mapping weather codes to descriptions
+        function getWeatherDescription(code) {
+            const weatherDescriptions = {
+                0: "Clear sky",
+                1: "Mainly clear",
+                2: "Partly cloudy",
+                3: "Overcast",
+                45: "Fog",
+                48: "Depositing rime fog",
+                51: "Light drizzle",
+                53: "Moderate drizzle",
+                55: "Dense drizzle",
+                61: "Slight rain",
+                63: "Moderate rain",
+                65: "Heavy rain",
+                71: "Slight snowfall",
+                73: "Moderate snowfall",
+                75: "Heavy snowfall",
+                80: "Slight rain showers",
+                81: "Moderate rain showers",
+                82: "Violent rain showers",
+                95: "Slight or moderate thunderstorm",
+                96: "Thunderstorm with slight hail",
+                99: "Thunderstorm with heavy hail"
+            };
+            return weatherDescriptions[code] || "Unknown weather condition";
+        }
+
+        async function getWeather(city) {
+            const geocodingUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}`;
+            try {
+                const geocodingResponse = await fetch(geocodingUrl);
+                const geocodingData = await geocodingResponse.json();
+
+                if (geocodingData.length === 0) {
+                    throw new Error(`Could not find location for ${city}`);
+                }
+
+                const { lat: latitude, lon: longitude } = geocodingData[0];
+                const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&timezone=Asia/Kolkata`);
+                const weatherData = await weatherResponse.json();
+
+                return { ...weatherData.current_weather, latitude, longitude };
+            } catch (error) {
+                console.error("Error fetching weather data:", error);
+                throw error;
+            }
+        }
+
+        async function getWeatherForRoute() {
+            const departureCity = document.getElementById("departure").value.trim();
+            const arrivalCity = document.getElementById("arrival").value.trim();
+
+            // Clear previous map markers and weather info
+            map.eachLayer(function (layer) {
+                if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+            document.getElementById("weather-info").innerHTML = "";
+
+            try {
+                const departureWeather = await getWeather(departureCity);
+                const arrivalWeather = await getWeather(arrivalCity);
+
+                // Add markers to the map
+                L.marker([departureWeather.latitude, departureWeather.longitude])
+                    .addTo(map)
+                    .bindPopup(`<b>${departureCity}</b><br>Temperature: ${departureWeather.temperature}°C<br>Condition: ${getWeatherDescription(departureWeather.weathercode)}`)
+                    .openPopup();
+
+                L.marker([arrivalWeather.latitude, arrivalWeather.longitude])
+                    .addTo(map)
+                    .bindPopup(`<b>${arrivalCity}</b><br>Temperature: ${arrivalWeather.temperature}°C<br>Condition: ${getWeatherDescription(arrivalWeather.weathercode)}`)
+                    .openPopup();
+
+                // Draw a line between the two locations
+                var route = L.polyline(
+                    [[departureWeather.latitude, departureWeather.longitude], [arrivalWeather.latitude, arrivalWeather.longitude]],
+                    { color: 'blue' }
+                ).addTo(map);
+                map.fitBounds(route.getBounds());
+
+                // Display weather information
+                document.getElementById("weather-info").innerHTML = `
+                    <h3>Weather Information</h3>
+                    <p><b>${departureCity}</b>: ${departureWeather.temperature}°C, ${getWeatherDescription(departureWeather.weathercode)}</p>
+                    <p><b>${arrivalCity}</b>: ${arrivalWeather.temperature}°C, ${getWeatherDescription(arrivalWeather.weathercode)}</p>
+                `;
+            } catch (error) {
+                document.getElementById("weather-info").innerHTML = `
+                    <h3>Error fetching data</h3>
+                    <p>${error.message}</p>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
